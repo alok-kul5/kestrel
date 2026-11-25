@@ -5,6 +5,8 @@ const fmt$ = (v) => "$" + Math.round(v).toLocaleString("en-US");
 const fmtK = (v) => (Math.abs(v) >= 1e6 ? "$" + (v / 1e6).toFixed(2) + "M" : "$" + Math.round(v / 1e3) + "k");
 const pct = (v, d = 1) => (v * 100).toFixed(d) + "%";
 
+const STILL = location.search.includes("still");
+if (STILL) document.documentElement.classList.add("still");
 let lastSeq = 0, running = true, summary = null, table = null, liveThr = null;
 
 function el(tag, attrs = {}, parent) {
@@ -14,6 +16,7 @@ function el(tag, attrs = {}, parent) {
   return n;
 }
 function countUp(node, to, render, ms = 1400) {
+  if (STILL) { node.textContent = render(to); return; }
   const t0 = performance.now();
   const step = (t) => {
     const k = Math.min((t - t0) / ms, 1), e = 1 - Math.pow(1 - k, 3);

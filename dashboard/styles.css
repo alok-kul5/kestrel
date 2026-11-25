@@ -156,3 +156,13 @@ footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
   .hero, main { padding-left: 22px; padding-right: 22px; }
   .ticker { flex-wrap: wrap; gap: 16px; }
 }
+
+/* ?still: no motion, for screenshots and reduced-motion users */
+.still *, .still *::before, .still *::after { animation: none !important; transition: none !important; }
+.still .reveal { opacity: 1; transform: none; }
+.still .draw { stroke-dashoffset: 0; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; }
+  .reveal { opacity: 1; transform: none; }
+  .draw { stroke-dashoffset: 0; }
+}
