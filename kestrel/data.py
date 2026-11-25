@@ -55,6 +55,19 @@ def _s(v) -> str:
     return str(v)
 
 
+def enrich(t: dict) -> dict:
+    """Add day, uid and device_fp to one raw transaction, matching `prepare`."""
+    t = {k: (None if isinstance(v, float) and np.isnan(v) else v) for k, v in t.items()}
+    day = int(t["TransactionDT"]) // DAY
+    d1 = t.get("D1")
+    addr1 = t.get("addr1")
+    opened = int(day - (d1 if d1 is not None else 0))
+    t["day"] = day
+    t["uid"] = f"{int(t['card1'])}_{int(addr1) if addr1 is not None else -1}_{opened}"
+    t["device_fp"] = device_fingerprint(t)
+    return t
+
+
 def device_fingerprint(t: dict) -> str | None:
     """Same fingerprint as `prepare`, for one transaction at serving time."""
     vals = [_s(t.get(c)) for c in DEV_PARTS]
