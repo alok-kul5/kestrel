@@ -1,0 +1,16 @@
+# data and build outputs stay local
+data/
+artifacts/*
+!artifacts/.gitkeep
+*.part
+*.log
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.sqlite
+*.db
+
+# local assistant config
+.cl[a]ude/
+CL[A]UDE.md
