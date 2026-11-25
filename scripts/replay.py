@@ -68,13 +68,17 @@ def main() -> None:
         if args.rate:
             time.sleep(max(0.0, (i + 1) / args.rate - (time.perf_counter() - t_start)))
     wall = time.perf_counter() - t_start
+    time.sleep(2)
+    srv = client.get("/api/latency").json()
     rtt, server = rtt[20:], server[20:]  # first requests warm caches; not counted
     out = {
         "requests": len(rows), "throughput_rps": round(len(rows) / wall, 1),
         "http_round_trip_ms": {q: round(float(np.percentile(rtt, int(q[1:]))), 2) for q in ("p50", "p95", "p99")},
         "server_compute_ms": {q: round(float(np.percentile(server, int(q[1:]))), 2) for q in ("p50", "p95", "p99")},
         "flag_rate": round(flagged / len(rows), 4),
-        "note": "single client, sequential requests, localhost, includes feature-store update + model + SHAP on flags",
+        "shap_reason_codes_p95_ms": round(srv["explain_p95_ms"], 2),
+        "explained_cases": srv["explain_n"],
+        "note": "single client, sequential requests, localhost, decision path = feature-store update + model + calibration; SHAP reason codes run on a background worker",
     }
     print(json.dumps(out, indent=2))
     if args.serve:

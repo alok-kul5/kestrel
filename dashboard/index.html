@@ -32,7 +32,7 @@
       <div class="kpi reveal" style="--i:2"><span class="k" id="kPr">0</span><span class="l">PR-AUC on unseen month</span></div>
       <div class="kpi reveal" style="--i:3"><span class="k" id="kRec">0</span><span class="l">Recall at 1% false-positive rate</span></div>
       <div class="kpi reveal" style="--i:4"><span class="k" id="kSave">0</span><span class="l">Loss avoided vs approve-all</span></div>
-      <div class="kpi reveal" style="--i:5"><span class="k" id="kLat">0</span><span class="l">p95 scoring latency, live</span></div>
+      <div class="kpi reveal" style="--i:5"><span class="k" id="kLat">0</span><span class="l">p95 decision latency, live (server)</span></div>
     </div>
   </div>
   <div class="ticker reveal" style="--i:6">
@@ -62,13 +62,13 @@
       <header><h2>Cost vs threshold</h2><span class="hint">$5 per review · missed fraud costs amount + $20</span></header>
       <svg id="costChart" class="chart" viewBox="0 0 560 260"></svg>
       <div class="slider-row">
-        <input id="thr" type="range" min="0.01" max="0.99" step="0.01" value="0.2">
+        <input id="thr" type="range" min="100" max="995" step="1" value="200" aria-label="decision threshold">
         <button id="applyThr" class="btn solid">Apply to live scoring</button>
       </div>
       <div class="stats" id="thrStats"></div>
     </article>
     <article class="panel reveal" style="--i:10">
-      <header><h2>Precision-recall</h2><span class="hint">test month, 3.4% fraud base rate</span></header>
+      <header><h2>Precision-recall</h2><span class="hint" id="prHint">test month</span></header>
       <svg id="prChart" class="chart" viewBox="0 0 560 300"></svg>
       <div class="legend" id="prLegend"></div>
     </article>

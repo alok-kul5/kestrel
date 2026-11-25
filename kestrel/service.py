@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import pickle
+import queue
 import threading
 import time
 from collections import OrderedDict, deque
@@ -89,6 +90,9 @@ class Engine:
         self.latency_ms: deque = deque(maxlen=20000)
         self.seq = 0
         self.recent: OrderedDict = OrderedDict()
+        self.explain_ms: deque = deque(maxlen=20000)
+        self.explain_q: queue.Queue = queue.Queue()
+        threading.Thread(target=self._explain_worker, daemon=True).start()
         self.now = 0
         self.counts = {"scored": 0, "flagged": 0, "flagged_fraud": 0, "fraud": 0}
         self.queue: list[dict] = []
@@ -113,7 +117,19 @@ class Engine:
         self.queue = test.astype(object).where(test.notna(), None).to_dict("records")
         self.warm_seconds = time.time() - t0
 
-    def score(self, raw: dict, label: int | None = None) -> dict:
+    def _explain_worker(self) -> None:
+        while True:
+            ev, x = self.explain_q.get()
+            t0 = time.perf_counter()
+            ev["reasons"] = self.explain(x)
+            self.explain_ms.append((time.perf_counter() - t0) * 1000)
+
+    def explain(self, x: np.ndarray) -> list[dict]:
+        contrib = self.booster.predict(x, pred_contrib=True, num_threads=1)[0]
+        return clean(reason_codes(contrib, x[0], FEATURES))
+
+    def score(self, raw: dict, label: int | None = None, explain: bool = False) -> dict:
+        """Decide now; explain flagged cases inline (`explain`) or on the background worker."""
         t0 = time.perf_counter()
         t = enrich(raw)
         with self.lock:
@@ -125,11 +141,11 @@ class Engine:
                 self.recent.popitem(last=False)
             self.now = int(t["TransactionDT"])
         x = self.encoder.transform_one(t, f)
-        raw_p = float(self.booster.predict(x)[0])
+        raw_p = float(self.booster.predict(x, num_threads=1)[0])
         p = float(self.calibrator.predict([raw_p])[0])
         flag = p >= self.threshold
-        reasons = reason_codes(self.booster.predict(x, pred_contrib=True)[0], x[0], FEATURES) if flag else []
         ms = (time.perf_counter() - t0) * 1000
+        reasons = self.explain(x) if flag and explain else []
         with self.lock:
             self.seq += 1
             ev = {"seq": self.seq, "id": int(t["TransactionID"]), "dt": int(t["TransactionDT"]),
@@ -150,6 +166,8 @@ class Engine:
                 self.counts["flagged"] += 1
                 self.counts["flagged_fraud"] += int(label == 1)
                 self.flagged.append(ev)
+        if flag and not explain:
+            self.explain_q.put((ev, x))
         return ev
 
     # replay of the test month, in-process
@@ -174,8 +192,10 @@ class Engine:
 
     def latency(self) -> dict:
         a = np.asarray(self.latency_ms) if self.latency_ms else np.asarray([0.0])
+        b = np.asarray(self.explain_ms) if self.explain_ms else np.asarray([0.0])
         return {"n": len(self.latency_ms), "p50_ms": float(np.percentile(a, 50)),
-                "p95_ms": float(np.percentile(a, 95)), "p99_ms": float(np.percentile(a, 99))}
+                "p95_ms": float(np.percentile(a, 95)), "p99_ms": float(np.percentile(a, 99)),
+                "explain_p95_ms": float(np.percentile(b, 95)), "explain_n": len(self.explain_ms)}
 
 
 app = FastAPI(title="Kestrel fraud scoring", version="1.0")
@@ -204,8 +224,9 @@ def health():
 
 
 @app.post("/score")
-def score(txn: Txn):
-    return get_engine().score(txn.model_dump())
+def score(txn: Txn, explain: bool = False):
+    """Score one transaction. Reason codes come back inline with ?explain=true."""
+    return get_engine().score(txn.model_dump(), explain=explain)
 
 
 @app.get("/api/summary")
@@ -220,6 +241,11 @@ def summary():
 @app.get("/api/curves")
 def curves():
     return get_engine().curves
+
+
+@app.get("/api/latency")
+def latency():
+    return get_engine().latency()
 
 
 @app.get("/api/feed")

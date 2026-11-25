@@ -46,7 +46,7 @@ def test_service_scores_and_explains(trained, monkeypatch):
     r = client.post("/score", json=row).json()
     assert 0 <= r["p"] <= 1 and r["decision"] in ("approve", "review")
     client.post("/api/threshold", json={"threshold": 0.01})
-    r = client.post("/score", json={**row, "TransactionID": 1, "TransactionDT": row["TransactionDT"] + 5,
+    r = client.post("/score?explain=true", json={**row, "TransactionID": 1, "TransactionDT": row["TransactionDT"] + 5,
                                     "TransactionAmt": 5000.0}).json()
     assert r["decision"] == ("review" if r["p"] >= 0.01 else "approve")
     assert isinstance(r["reasons"], list)

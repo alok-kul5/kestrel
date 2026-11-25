@@ -29,6 +29,7 @@ from .features import ENGINEERED
 from .matrix import FEATURES, Encoder
 from .monitor import weekly_report
 
+FEEDBACK = ["uid_known_fraud", "uid_known_rate", "dev_known_fraud", "card_known_rate", "g_comp_known_fraud"]
 GRAPH = [f for f in ENGINEERED if f.startswith("g_") or f in ("dev_uids_30d", "card_uids_7d", "uid_devices_30d")]
 
 
@@ -151,6 +152,8 @@ def run(df: pd.DataFrame, feats: pd.DataFrame, out: Path, fast: bool = False,
     record("ablation_raw_columns_only", lgbm("none"), cols=raw_cols, note="no engineered features")
     record("ablation_no_graph", lgbm("none"), cols=[c for c in FEATURES if c not in GRAPH],
            note="engineered but no shared-entity/graph features")
+    record("ablation_no_label_feedback", lgbm("none"), cols=[c for c in FEATURES if c not in FEEDBACK],
+           note="engineered but no delayed-label features")
 
     # champion: best LightGBM variant on validation PR-AUC (TreeSHAP reason codes need a tree model)
     lgb_names = ["lightgbm_none", "lightgbm_class_weight", "lightgbm_undersample"]

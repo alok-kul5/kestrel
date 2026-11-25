@@ -34,11 +34,12 @@ async function boot() {
   countUp($("kPr"), champ.pr_auc, (v) => v.toFixed(3));
   countUp($("kRec"), champ.recall_at_1pct_fpr, (v) => pct(v));
   countUp($("kSave"), 1 - d.global_threshold.cost / d.approve_all_cost, (v) => pct(v, 0));
+  $("prHint").textContent = `test month, ${pct(summary.split.test.fraud_rate)} fraud base rate`;
   drawPR(curves);
   drawShap(summary.shap_importance);
   drawBench(summary);
   const s = $("thr");
-  s.value = Math.max(0.01, Math.min(0.99, d.threshold)).toFixed(2);
+  s.value = Math.sqrt(Math.max(0.01, Math.min(0.99, d.threshold))) * 1000;
   s.oninput = () => drawCost();
   drawCost(true);
   monitoring();
@@ -109,20 +110,21 @@ async function flagged() {
 }
 
 /* cost vs threshold */
+const sliderThr = () => Math.min(0.99, Math.max(0.01, Math.round(Math.pow(+$("thr").value / 1000, 2) * 100) / 100));
 function drawCost(animate) {
   const svg = $("costChart");
   svg.innerHTML = "";
   const W = 560, H = 260, L = 56, R = 14, T = 14, B = 34;
   const xs = table.threshold, ys = table.cost;
   const yMax = Math.max(...ys, table.approve_all) * 1.05;
-  const x = (v) => L + ((v - 0) / 1) * (W - L - R);
+  const x = (v) => L + Math.sqrt(v) * (W - L - R);   // sqrt axis: the useful low thresholds get room
   const y = (v) => T + (1 - v / yMax) * (H - T - B);
   for (let i = 0; i <= 4; i++) {
     const v = (yMax / 4) * i;
     el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "axis" }, svg);
     el("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end" }, svg).textContent = fmtK(v);
   }
-  for (const v of [0, 0.25, 0.5, 0.75, 1]) el("text", { x: x(v), y: H - 12, "text-anchor": "middle" }, svg).textContent = v.toFixed(2);
+  for (const v of [0.01, 0.05, 0.1, 0.25, 0.5, 1]) el("text", { x: x(v), y: H - 12, "text-anchor": "middle" }, svg).textContent = v;
   el("line", { x1: L, x2: W - R, y1: y(table.approve_all), y2: y(table.approve_all), stroke: "#a99486", "stroke-dasharray": "4 5" }, svg);
   el("text", { x: W - R, y: y(table.approve_all) - 6, "text-anchor": "end" }, svg).textContent = "approve everything";
   const d = xs.map((v, i) => `${i ? "L" : "M"}${x(v).toFixed(1)},${y(ys[i]).toFixed(1)}`).join("");
@@ -135,7 +137,7 @@ function drawCost(animate) {
   const best = summary.decision.threshold;
   el("line", { x1: x(best), x2: x(best), y1: T, y2: H - B, stroke: "#7fd1a8", "stroke-dasharray": "3 4" }, svg);
   el("text", { x: x(best) + 6, y: T + 12, fill: "#7fd1a8" }, svg).textContent = "cost-optimal (chosen on validation)";
-  const thr = +$("thr").value;
+  const thr = sliderThr();
   const i = xs.findIndex((v) => v >= thr - 1e-9);
   el("line", { x1: x(thr), x2: x(thr), y1: T, y2: H - B, stroke: "#ffb547", "stroke-width": 2 }, svg);
   el("circle", { cx: x(thr), cy: y(ys[i]), r: 6, fill: "#ffb547", stroke: "#110d0b", "stroke-width": 2 }, svg);
@@ -151,7 +153,7 @@ function drawCost(animate) {
   $("thrStats").innerHTML = stats.map(([b, s]) => `<div class="stat"><b>${b}</b><span>${s}</span></div>`).join("");
 }
 $("applyThr").onclick = async () => {
-  await api("/api/threshold", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ threshold: +$("thr").value }) });
+  await api("/api/threshold", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ threshold: sliderThr() }) });
   $("applyThr").textContent = "Applied ✓";
   setTimeout(() => ($("applyThr").textContent = "Apply to live scoring"), 1500);
 };
@@ -228,8 +230,8 @@ function drawShap(rows) {
     `<div class="shap-row"><span title="${r.feature}">${r.feature}</span><i style="width:${(r.mean_abs_shap / max) * 100}%;animation-delay:${400 + i * 60}ms"></i></div>`).join("");
 }
 function drawBench(s) {
-  const names = ["logreg_balanced", "lightgbm_none", "lightgbm_class_weight", "lightgbm_undersample", "xgboost", "isolation_forest", "ablation_raw_columns_only", "ablation_no_graph"];
-  const nice = { logreg_balanced: "LogReg (balanced)", lightgbm_none: "LightGBM", lightgbm_class_weight: "LightGBM + class weight", lightgbm_undersample: "LightGBM + undersample", xgboost: "XGBoost", isolation_forest: "Isolation forest", ablation_raw_columns_only: "No engineered feats", ablation_no_graph: "No graph feats" };
+  const names = ["logreg_balanced", "lightgbm_none", "lightgbm_class_weight", "lightgbm_undersample", "xgboost", "isolation_forest", "ablation_raw_columns_only", "ablation_no_graph", "ablation_no_label_feedback"];
+  const nice = { logreg_balanced: "LogReg (balanced)", lightgbm_none: "LightGBM", lightgbm_class_weight: "LightGBM + class weight", lightgbm_undersample: "LightGBM + undersample", xgboost: "XGBoost", isolation_forest: "Isolation forest", ablation_raw_columns_only: "No engineered feats", ablation_no_graph: "No graph feats", ablation_no_label_feedback: "No label feedback" };
   $("bench").innerHTML = `<tr><th>Model</th><th>PR-AUC</th><th>Rec@1%</th><th>ROC</th></tr>` + names.filter((n) => s.models[n]).map((n) => {
     const t = s.models[n].test;
     return `<tr class="${n === s.champion ? "champ" : ""}"><td>${nice[n]}</td><td>${t.pr_auc.toFixed(3)}</td><td>${pct(t.recall_at_1pct_fpr)}</td><td>${t.roc_auc.toFixed(3)}</td></tr>`;

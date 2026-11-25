@@ -63,12 +63,34 @@ def _human_secs(s: float) -> str:
     return f"{s / 86400:.0f} days"
 
 
+MISSING = {
+    "secs_since_last": "First transaction seen on this account",
+    "uid_amt_mean": "No spending history for this account",
+    "amt_z": "Too little history to judge the amount",
+    "amt_ratio": "No spending history for this account",
+    "hour_dev": "No time-of-day history for this account",
+    "uid_known_rate": "No confirmed history for this account yet",
+    "card_known_rate": "No confirmed history for this card range",
+    "dev_known_fraud": "No device fingerprint on this transaction",
+    "dev_uids_30d": "No device fingerprint on this transaction",
+    "dev_cnt_24h": "No device fingerprint on this transaction",
+    "new_device": "No device fingerprint on this transaction",
+    "new_email": "No email domain given",
+    "dist1": "Billing distance not provided",
+}
+VESTA = {"C": "Vesta count signal {n} = {v:g}", "D": "Vesta days-gap signal {n} = {v:g}"}
+RAW = {"card1": "Card range id {v:.0f}", "card2": "Card sub-range {v:.0f}", "card3": "Card country code {v:.0f}",
+       "card5": "Card category code {v:.0f}", "addr1": "Billing region {v:.0f}", "addr2": "Billing country {v:.0f}"}
+
+
 def describe(name: str, value: float) -> str:
     if value is None or (isinstance(value, float) and math.isnan(value)):
-        return f"{name} missing"
-    tpl = REASONS.get(name)
+        return MISSING.get(name, f"{name} not provided")
+    tpl = REASONS.get(name) or RAW.get(name)
+    if tpl is None and name[0] in VESTA and name[1:].isdigit():
+        return VESTA[name[0]].format(n=name, v=value)
     if tpl is None:
-        return f"{name} = {value:g}"
+        return f"{name.replace('_', ' ')} = {value:g}"
     return tpl.format(v=value, h=_human_secs(value), yn="New" if value >= 0.5 else "Known")
 
 
