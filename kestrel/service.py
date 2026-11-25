@@ -40,6 +40,17 @@ class Txn(BaseModel):
     card1: int
 
 
+def clean(o):
+    """Replace NaN/inf with None so responses stay valid JSON."""
+    if isinstance(o, float):
+        return o if np.isfinite(o) else None
+    if isinstance(o, dict):
+        return {k: clean(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [clean(v) for v in o]
+    return o
+
+
 def threshold_table(test: pd.DataFrame) -> dict:
     """Per-threshold confusion counts and money on the test month, for the slider."""
     y, p, amt = test["y"].to_numpy(), test["p"].to_numpy(), test["amt"].to_numpy()
@@ -61,7 +72,7 @@ class Engine:
         self.booster = lgb.Booster(model_file=str(artifacts / "model.txt"))
         self.calibrator = pickle.loads((artifacts / "calibrator.pkl").read_bytes())
         self.encoder = pickle.loads((artifacts / "encoder.pkl").read_bytes())
-        self.results = json.loads((artifacts / "results.json").read_text())
+        self.results = clean(json.loads((artifacts / "results.json").read_text()))
         self.curves = json.loads((artifacts / "curves.json").read_text())
         self.threshold = float(self.results["decision"]["threshold"])
         oos = pd.read_parquet(artifacts / "oos_scores.parquet")
@@ -118,7 +129,8 @@ class Engine:
                   "device": t.get("DeviceInfo"), "account": t["uid"],
                   "p": p, "raw_score": raw_p, "decision": "review" if flag else "approve",
                   "reasons": reasons, "latency_ms": round(ms, 3), "label": label,
-                  "velocity_24h": f["uid_cnt_24h"], "shared_device": f["dev_n_uids"]}
+                  "velocity_24h": f["uid_cnt_24h"], "shared_device": f["dev_uids_30d"]}
+            ev = clean(ev)
             self.events.append(ev)
             self.live_scores.append(p)
             self.latency_ms.append(ms)
@@ -226,7 +238,7 @@ def monitoring():
         live = np.asarray(e.live_scores)
     v = psi(e.ref_scores, live) if len(live) >= 200 else None
     return {"weekly": e.results["monitoring"],
-            "live": {"n": int(len(live)), "psi": v, "status": psi_status(v) if v is not None else "warming up",
+            "live": {"n": int(len(live)), "psi": clean(v), "status": psi_status(v) if v is not None else "warming up",
                      "mean_score": float(live.mean()) if len(live) else None}}
 
 

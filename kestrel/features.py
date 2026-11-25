@@ -19,9 +19,9 @@ HOUR, DAY = 3600, 86_400
 ENGINEERED = [
     "uid_cnt_1h", "uid_cnt_24h", "uid_cnt_7d", "uid_amt_24h", "uid_amt_7d",
     "card_cnt_24h", "card_amt_24h", "dev_cnt_24h", "secs_since_last",
-    "uid_prior_n", "uid_amt_mean", "amt_z", "amt_ratio", "hour", "hour_dev",
-    "new_device", "new_email", "dev_n_uids", "card_n_uids", "uid_n_devices",
-    "prod_amt_ratio",
+    "uid_amt_mean", "amt_z", "amt_ratio", "hour", "hour_dev",
+    "new_device", "new_email", "dev_uids_30d", "card_uids_7d", "uid_devices_30d",
+    "uid_cnt_30d", "prod_amt_ratio", "amt_cents",
     "g_comp_uids", "g_comp_cards", "g_uid_degree", "g_dev_degree",
 ]
 
@@ -50,11 +50,37 @@ class Window:
         return len(self.q)
 
 
+class DistinctWindow:
+    """Distinct keys seen inside a sliding time window."""
+
+    __slots__ = ("span", "q", "counts")
+
+    def __init__(self, span: int):
+        self.span = span
+        self.q: deque = deque()
+        self.counts: dict = {}
+
+    def add(self, ts: int, key) -> None:
+        self.q.append((ts, key))
+        self.counts[key] = self.counts.get(key, 0) + 1
+        q, c = self.q, self.counts
+        while q and q[0][0] <= ts - self.span:
+            k = q.popleft()[1]
+            c[k] -= 1
+            if not c[k]:
+                del c[k]
+
+    def __len__(self) -> int:
+        return len(self.counts)
+
+
 @dataclass
 class Account:
     w1h: Window = field(default_factory=lambda: Window(HOUR))
     w24h: Window = field(default_factory=lambda: Window(DAY))
     w7d: Window = field(default_factory=lambda: Window(7 * DAY))
+    w30d: Window = field(default_factory=lambda: Window(30 * DAY))
+    dev30: DistinctWindow = field(default_factory=lambda: DistinctWindow(30 * DAY))
     n: int = 0
     mean: float = 0.0
     m2: float = 0.0
@@ -74,8 +100,8 @@ class FeatureStore:
         self.accounts: dict[str, Account] = defaultdict(Account)
         self.cards: dict = defaultdict(lambda: Window(DAY))
         self.devices: dict = defaultdict(lambda: Window(DAY))
-        self.device_uids: dict = defaultdict(set)
-        self.card_uids: dict = defaultdict(set)
+        self.device_uids: dict = defaultdict(lambda: DistinctWindow(30 * DAY))
+        self.card_uids: dict = defaultdict(lambda: DistinctWindow(7 * DAY))
         self.product: dict = defaultdict(lambda: [0, 0.0])
         self.graph: dict = {"uid": {}, "dev": {}}
 
@@ -95,13 +121,15 @@ class FeatureStore:
         a.w1h.add(ts, amt)
         a.w24h.add(ts, amt)
         a.w7d.add(ts, amt)
+        a.w30d.add(ts, amt)
         cw = self.cards[card]
         cw.add(ts, amt)
         if dev is not None:
             dw = self.devices[dev]
             dw.add(ts, 1.0)
-            self.device_uids[dev].add(uid)
-        self.card_uids[card].add(uid)
+            self.device_uids[dev].add(ts, uid)
+            a.dev30.add(ts, dev)
+        self.card_uids[card].add(ts, uid)
 
         std = math.sqrt(a.m2 / (a.n - 1)) if a.n > 1 else None
         hour = (ts % DAY) / HOUR
@@ -130,10 +158,12 @@ class FeatureStore:
             "hour_dev": _nan(hour_dev),
             "new_device": (float(dev not in a.devices) if a.n else 1.0) if dev is not None else float("nan"),
             "new_email": (float(email not in a.emails) if a.n else 1.0) if email is not None else float("nan"),
-            "dev_n_uids": len(self.device_uids[dev]) if dev is not None else float("nan"),
-            "card_n_uids": len(self.card_uids[card]),
-            "uid_n_devices": len(a.devices | ({dev} if dev is not None else set())),
+            "dev_uids_30d": len(self.device_uids[dev]) if dev is not None else float("nan"),
+            "card_uids_7d": len(self.card_uids[card]),
+            "uid_devices_30d": len(a.dev30),
+            "uid_cnt_30d": len(a.w30d),
             "prod_amt_ratio": amt / pmean if pn and pmean > 0 else float("nan"),
+            "amt_cents": round(amt % 1, 3),
             "g_comp_uids": g_uid[0] if g_uid else 0,
             "g_comp_cards": g_uid[1] if g_uid else 0,
             "g_uid_degree": g_uid[2] if g_uid else 0,

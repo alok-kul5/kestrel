@@ -11,6 +11,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from kestrel.config import ARTIFACTS, PROCESSED  # noqa: E402
+from kestrel.data import CATEGORICAL  # noqa: E402
+from kestrel.matrix import RAW_NUMERIC  # noqa: E402
 from kestrel.train import run  # noqa: E402
 
 
@@ -18,9 +20,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fast", action="store_true", help="few trees, for a smoke run")
     args = ap.parse_args()
-    df = pd.read_parquet(PROCESSED / "transactions.parquet")
+    cols = ["TransactionID", "isFraud", "day"] + RAW_NUMERIC + CATEGORICAL
+    df = pd.read_parquet(PROCESSED / "transactions.parquet", columns=cols)
     feats = pd.read_parquet(PROCESSED / "features.parquet")
-    res = run(df, feats, ARTIFACTS, fast=args.fast)
+    res = run(df, feats, ARTIFACTS, fast=args.fast, cache=PROCESSED.parent / "cache")
     print(json.dumps({"champion": res["champion"], "decision": res["decision"],
                       "calibration": res["calibration"]}, indent=2))
 

@@ -29,7 +29,7 @@ from .features import ENGINEERED
 from .matrix import FEATURES, Encoder
 from .monitor import weekly_report
 
-GRAPH = [f for f in ENGINEERED if f.startswith("g_") or f in ("dev_n_uids", "card_n_uids")]
+GRAPH = [f for f in ENGINEERED if f.startswith("g_") or f in ("dev_uids_30d", "card_uids_7d", "uid_devices_30d")]
 
 
 def signed_log(x):
@@ -37,8 +37,8 @@ def signed_log(x):
 
 
 def lgb_params(fast: bool) -> dict:
-    return dict(n_estimators=60 if fast else 700, learning_rate=0.05, num_leaves=127,
-                min_child_samples=100, subsample=0.8, subsample_freq=1, colsample_bytree=0.7,
+    return dict(n_estimators=60 if fast else 3000, learning_rate=0.03, num_leaves=63,
+                min_child_samples=200, subsample=0.8, subsample_freq=1, colsample_bytree=0.7,
                 reg_lambda=1.0, random_state=SEED, verbose=-1, n_jobs=-1)
 
 
@@ -49,7 +49,9 @@ def split(df: pd.DataFrame):
     return tr.values, va.values, te.values
 
 
-def run(df: pd.DataFrame, feats: pd.DataFrame, out: Path, fast: bool = False) -> dict:
+def run(df: pd.DataFrame, feats: pd.DataFrame, out: Path, fast: bool = False,
+        cache: Path | None = None) -> dict:
+    """`cache` keeps each model's scores so a run interrupted (e.g. by low RAM) can resume."""
     out.mkdir(parents=True, exist_ok=True)
     tr, va, te = split(df)
     enc = Encoder().fit(df[tr])
@@ -69,9 +71,22 @@ def run(df: pd.DataFrame, feats: pd.DataFrame, out: Path, fast: bool = False) ->
     def record(name, model_fn, cols=FEATURES, note=""):
         gc.collect()
         t0 = time.time()
-        pv, pt = model_fn(cols)
+        hit = cache / f"{name}.npz" if cache else None
+        if hit and hit.exists():
+            z = np.load(hit)
+            pv, pt = z["pv"], z["pt"]
+            model_fn.trees = int(z["trees"]) if z["trees"] >= 0 else None
+            if (cache / f"{name}.txt").exists():
+                model_fn.model = lgb.Booster(model_file=str(cache / f"{name}.txt"))
+        else:
+            pv, pt = model_fn(cols)
+            if hit:
+                cache.mkdir(parents=True, exist_ok=True)
+                np.savez(hit, pv=pv, pt=pt, trees=getattr(model_fn, "trees", None) or -1)
+                if getattr(model_fn, "model", None) is not None:
+                    model_fn.model.save_model(str(cache / f"{name}.txt"))
         preds[name] = (pv, pt)
-        res["models"][name] = {"valid": M.summary(yva, pv), "test": M.summary(yte, pt),
+        res["models"][name] = {"trees": getattr(model_fn, "trees", None), "valid": M.summary(yva, pv), "test": M.summary(yte, pt),
                                "fit_seconds": round(time.time() - t0, 1), "note": note}
         print(f"{name:32s} valid PR-AUC {res['models'][name]['valid']['pr_auc']:.4f}  "
               f"test PR-AUC {res['models'][name]['test']['pr_auc']:.4f}  ({time.time() - t0:.0f}s)")
@@ -94,8 +109,11 @@ def run(df: pd.DataFrame, feats: pd.DataFrame, out: Path, fast: bool = False) ->
             if weighting == "undersample":
                 keep = (yf == 1) | (rng.random(len(yf)) < 5 * (yf == 1).sum() / (yf == 0).sum())
                 Xf, yf = Xf[keep], yf[keep]
-            m = lgb.LGBMClassifier(**lgb_params(fast), **kw).fit(Xf, yf)
-            fit.model = m
+            m = lgb.LGBMClassifier(**lgb_params(fast), **kw).fit(
+                Xf, yf, eval_set=[(Xva[cols], yva)], eval_metric="average_precision",
+                callbacks=[lgb.early_stopping(150, first_metric_only=True, verbose=False)])
+            fit.model = m.booster_
+            fit.trees = int(m.best_iteration_ or m.n_estimators)
             return m.predict_proba(Xva[cols])[:, 1], m.predict_proba(Xte[cols])[:, 1]
         return fit
 
@@ -108,13 +126,14 @@ def run(df: pd.DataFrame, feats: pd.DataFrame, out: Path, fast: bool = False) ->
 
     # 3. XGBoost (GPU if available)
     def xgboost(cols):
-        params = dict(n_estimators=60 if fast else 700, learning_rate=0.05, max_depth=8,
+        params = dict(n_estimators=60 if fast else 3000, learning_rate=0.03, max_depth=8,
                       subsample=0.8, colsample_bytree=0.7, min_child_weight=5, tree_method="hist",
-                      eval_metric="aucpr", random_state=SEED)
+                      eval_metric="aucpr", early_stopping_rounds=150, random_state=SEED)
+        fit_kw = dict(eval_set=[(Xva[cols], yva)], verbose=False)
         try:
-            m = xgb.XGBClassifier(device="cuda", **params).fit(Xtr[cols], ytr)
+            m = xgb.XGBClassifier(device="cuda", **params).fit(Xtr[cols], ytr, **fit_kw)
         except Exception:
-            m = xgb.XGBClassifier(**params).fit(Xtr[cols], ytr)
+            m = xgb.XGBClassifier(**params).fit(Xtr[cols], ytr, **fit_kw)
         return m.predict_proba(Xva[cols])[:, 1], m.predict_proba(Xte[cols])[:, 1]
     record("xgboost", xgboost, note="hist, depth 8")
 
@@ -173,7 +192,7 @@ def run(df: pd.DataFrame, feats: pd.DataFrame, out: Path, fast: bool = False) ->
 
     # SHAP global importance on a test sample
     idx = rng.choice(np.flatnonzero(te), size=min(20_000, int(te.sum())), replace=False)
-    contrib = model.booster_.predict(X.iloc[idx].values, pred_contrib=True)
+    contrib = model.predict(X.iloc[idx].values, pred_contrib=True)
     imp = np.abs(contrib[:, :-1]).mean(0)
     res["shap_importance"] = sorted(({"feature": f, "mean_abs_shap": float(v)} for f, v in zip(FEATURES, imp)),
                                     key=lambda d: -d["mean_abs_shap"])[:20]
@@ -196,7 +215,7 @@ def run(df: pd.DataFrame, feats: pd.DataFrame, out: Path, fast: bool = False) ->
         s = max(len(p_) // 200, 1)
         curves["pr_by_model"][n] = {"precision": p_[::s].tolist(), "recall": r_[::s].tolist()}
 
-    model.booster_.save_model(str(out / "model.txt"))
+    model.save_model(str(out / "model.txt"))
     with open(out / "calibrator.pkl", "wb") as f:
         pickle.dump(iso, f)
     with open(out / "encoder.pkl", "wb") as f:
