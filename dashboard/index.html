@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kestrel · Fraud desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,900&family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="hero">
+  <div class="scan"></div>
+  <nav class="top reveal" style="--i:0">
+    <div class="brand"><svg viewBox="0 0 32 32" class="mark" aria-hidden="true"><path d="M3 18 L16 6 L29 18 L22 16 L16 26 L10 16 Z"/></svg>Kestrel</div>
+    <div class="live"><span class="pulse"></span><span id="liveText">connecting</span></div>
+    <div class="controls">
+      <button id="playBtn" class="btn">Pause</button>
+      <label class="speed">Speed
+        <select id="speed"><option value="5">5 / s</option><option value="12" selected>12 / s</option><option value="40">40 / s</option><option value="200">200 / s</option></select>
+      </label>
+    </div>
+  </nav>
+  <div class="hero-body">
+    <div class="headline reveal" style="--i:1">
+      <p class="eyebrow">Real-time payment fraud desk · IEEE-CIS test month</p>
+      <h1>Every swipe scored,<br><em>every flag explained.</em></h1>
+      <p class="sub">A LightGBM model fed by a streaming feature store: velocity, behaviour drift and shared-device graph signals, calibrated and thresholded on dollars, not accuracy.</p>
+    </div>
+    <div class="kpis">
+      <div class="kpi reveal" style="--i:2"><span class="k" id="kPr">0</span><span class="l">PR-AUC on unseen month</span></div>
+      <div class="kpi reveal" style="--i:3"><span class="k" id="kRec">0</span><span class="l">Recall at 1% false-positive rate</span></div>
+      <div class="kpi reveal" style="--i:4"><span class="k" id="kSave">0</span><span class="l">Loss avoided vs approve-all</span></div>
+      <div class="kpi reveal" style="--i:5"><span class="k" id="kLat">0</span><span class="l">p95 scoring latency, live</span></div>
+    </div>
+  </div>
+  <div class="ticker reveal" style="--i:6">
+    <div><b id="cScored">0</b> scored</div>
+    <div><b id="cFlagged">0</b> sent to review</div>
+    <div><b id="cHit">0</b> confirmed fraud in review queue</div>
+    <div><b id="cThr">-</b> live threshold</div>
+    <div><b id="cPsi">-</b> live score PSI</div>
+  </div>
+</header>
+
+<main>
+  <section class="grid two">
+    <article class="panel reveal" style="--i:7">
+      <header><h2>Live stream</h2><span class="hint">replaying the held-out month through <code>/score</code></span></header>
+      <div class="stream-head"><span>Time</span><span>Account</span><span>Amount</span><span>Risk</span><span>Decision</span></div>
+      <div id="stream" class="stream"></div>
+    </article>
+    <article class="panel reveal" style="--i:8">
+      <header><h2>Review queue</h2><span class="hint">top SHAP reason codes per decision</span></header>
+      <div id="cases" class="cases"><p class="empty">Waiting for the first flag…</p></div>
+    </article>
+  </section>
+
+  <section class="grid two">
+    <article class="panel reveal" style="--i:9">
+      <header><h2>Cost vs threshold</h2><span class="hint">$5 per review · missed fraud costs amount + $20</span></header>
+      <svg id="costChart" class="chart" viewBox="0 0 560 260"></svg>
+      <div class="slider-row">
+        <input id="thr" type="range" min="0.01" max="0.99" step="0.01" value="0.2">
+        <button id="applyThr" class="btn solid">Apply to live scoring</button>
+      </div>
+      <div class="stats" id="thrStats"></div>
+    </article>
+    <article class="panel reveal" style="--i:10">
+      <header><h2>Precision-recall</h2><span class="hint">test month, 3.4% fraud base rate</span></header>
+      <svg id="prChart" class="chart" viewBox="0 0 560 300"></svg>
+      <div class="legend" id="prLegend"></div>
+    </article>
+  </section>
+
+  <section class="grid three">
+    <article class="panel reveal" style="--i:11">
+      <header><h2>Drift &amp; fraud rate</h2><span class="hint">weekly, vs validation reference</span></header>
+      <svg id="monChart" class="chart" viewBox="0 0 420 240"></svg>
+      <div class="legend"><span><i class="sw bar"></i>fraud rate</span><span><i class="sw dot"></i>score PSI</span><span><i class="sw band"></i>PSI 0.1 watch line</span></div>
+    </article>
+    <article class="panel reveal" style="--i:12">
+      <header><h2>What drives the score</h2><span class="hint">mean |SHAP|, test sample</span></header>
+      <div id="shap" class="shap"></div>
+    </article>
+    <article class="panel reveal" style="--i:13">
+      <header><h2>Model bench</h2><span class="hint">same time split, test month</span></header>
+      <table class="bench" id="bench"></table>
+    </article>
+  </section>
+  <footer>Kestrel · IEEE-CIS Fraud Detection data (Vesta) · time-split, no look-ahead · scores are calibrated probabilities</footer>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
