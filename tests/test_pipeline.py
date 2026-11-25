@@ -50,6 +50,7 @@ def test_service_scores_and_explains(trained, monkeypatch):
                                     "TransactionAmt": 5000.0}).json()
     assert r["decision"] == ("review" if r["p"] >= 0.01 else "approve")
     assert isinstance(r["reasons"], list)
+    assert client.post("/label", json={"TransactionID": 1, "is_fraud": True}).json()["ok"]
     feed = client.get("/api/feed").json()
     assert feed["counts"]["scored"] == 2
     assert client.get("/api/monitoring").json()["weekly"]

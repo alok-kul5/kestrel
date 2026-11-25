@@ -22,8 +22,13 @@ ENGINEERED = [
     "uid_amt_mean", "amt_z", "amt_ratio", "hour", "hour_dev",
     "new_device", "new_email", "dev_uids_30d", "card_uids_7d", "uid_devices_30d",
     "uid_cnt_30d", "prod_amt_ratio", "amt_cents",
-    "g_comp_uids", "g_comp_cards", "g_uid_degree", "g_dev_degree",
+    "g_comp_uids", "g_comp_cards", "g_uid_degree", "g_dev_degree", "g_comp_known_fraud",
+    "uid_known_fraud", "uid_known_rate", "dev_known_fraud", "card_known_rate",
 ]
+
+# Confirmed fraud labels become visible this long after the transaction
+# (chargebacks and analyst confirmations are never instant).
+LABEL_DELAY = 14 * DAY
 
 
 class Window:
@@ -104,6 +109,27 @@ class FeatureStore:
         self.card_uids: dict = defaultdict(lambda: DistinctWindow(7 * DAY))
         self.product: dict = defaultdict(lambda: [0, 0.0])
         self.graph: dict = {"uid": {}, "dev": {}}
+        self.label_delay = LABEL_DELAY
+        self.pending: deque = deque()       # (visible_at, uid, dev, card, label), time ordered
+        self.uid_lab: dict = defaultdict(lambda: [0, 0])   # [labelled, fraud]
+        self.dev_lab: dict = defaultdict(lambda: [0, 0])
+        self.card_lab: dict = defaultdict(lambda: [0, 0])
+
+    def label(self, t: dict, is_fraud: int, visible_at: int | None = None) -> None:
+        """Queue a confirmed label; it only affects features once `visible_at` has passed."""
+        ts = int(t["TransactionDT"]) + self.label_delay if visible_at is None else int(visible_at)
+        dev = t.get("device_fp")
+        self.pending.append((ts, t["uid"], None if isinstance(dev, float) else dev, t["card1"], int(is_fraud)))
+
+    def _release_labels(self, now: int) -> None:
+        q = self.pending
+        while q and q[0][0] <= now:
+            _, uid, dev, card, y = q.popleft()
+            for table, key in ((self.uid_lab, uid), (self.dev_lab, dev), (self.card_lab, card)):
+                if key is not None:
+                    r = table[key]
+                    r[0] += 1
+                    r[1] += y
 
     def set_graph(self, snapshot: dict) -> None:
         self.graph = snapshot
@@ -116,7 +142,11 @@ class FeatureStore:
             email = None
         if isinstance(dev, float):
             dev = None
+        self._release_labels(ts)
         a = self.accounts[uid]
+        ul = self.uid_lab.get(uid)
+        dl = self.dev_lab.get(dev) if dev is not None else None
+        cl = self.card_lab.get(card)
 
         a.w1h.add(ts, amt)
         a.w24h.add(ts, amt)
@@ -168,6 +198,11 @@ class FeatureStore:
             "g_comp_cards": g_uid[1] if g_uid else 0,
             "g_uid_degree": g_uid[2] if g_uid else 0,
             "g_dev_degree": g_dev if g_dev else 0,
+            "g_comp_known_fraud": g_uid[3] if g_uid else 0,
+            "uid_known_fraud": ul[1] if ul else 0,
+            "uid_known_rate": ul[1] / ul[0] if ul else float("nan"),
+            "dev_known_fraud": dl[1] if dl else (0 if dev is not None else float("nan")),
+            "card_known_rate": (cl[1] + 0.035 * 20) / (cl[0] + 20) if cl else float("nan"),
         }
 
         # fold the transaction into the account profile
@@ -189,6 +224,7 @@ class FeatureStore:
 
 
 STREAM_COLS = ["TransactionDT", "TransactionAmt", "uid", "device_fp", "P_emaildomain", "card1", "ProductCD", "day"]
+LABEL_COL = "isFraud"
 
 
 def build_features(df: pd.DataFrame, snapshots: dict[int, dict] | None = None,
@@ -198,10 +234,13 @@ def build_features(df: pd.DataFrame, snapshots: dict[int, dict] | None = None,
     starts = sorted(snapshots or {})
     rows = []
     k = -1
-    for t in df[STREAM_COLS].to_dict("records"):
+    cols = STREAM_COLS + ([LABEL_COL] if LABEL_COL in df else [])
+    for t in df[cols].to_dict("records"):
         while k + 1 < len(starts) and t["day"] >= starts[k + 1]:
             k += 1
             store.set_graph(snapshots[starts[k]])
         rows.append(store.process(t))
+        if t.get(LABEL_COL) is not None:
+            store.label(t, t[LABEL_COL])
     out = pd.DataFrame(rows, index=df.index, columns=ENGINEERED).astype(np.float32)
     return out, store

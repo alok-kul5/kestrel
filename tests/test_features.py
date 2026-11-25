@@ -83,3 +83,14 @@ def test_feature_frame_shape():
     f, _ = build_features(df)
     assert list(f.columns) == ENGINEERED and len(f) == len(df)
     assert np.isfinite(f["uid_cnt_24h"]).all()
+
+
+def test_labels_only_visible_after_delay():
+    s = FeatureStore()
+    t0 = _t(0, 10, uid="a", dev="d1")
+    s.process(t0)
+    s.label(t0, 1)
+    f = s.process(_t(DAY, 10, uid="a", dev="d1"))
+    assert f["uid_known_fraud"] == 0          # label not confirmed yet
+    f = s.process(_t(15 * DAY, 10, uid="a", dev="d1"))
+    assert f["uid_known_fraud"] == 1 and f["dev_known_fraud"] == 1

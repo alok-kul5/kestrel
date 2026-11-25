@@ -9,7 +9,7 @@ import os
 import pickle
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from pathlib import Path
 
 import lightgbm as lgb
@@ -88,6 +88,8 @@ class Engine:
         self.live_scores: deque = deque(maxlen=5000)
         self.latency_ms: deque = deque(maxlen=20000)
         self.seq = 0
+        self.recent: OrderedDict = OrderedDict()
+        self.now = 0
         self.counts = {"scored": 0, "flagged": 0, "flagged_fraud": 0, "fraud": 0}
         self.queue: list[dict] = []
         self.warm_seconds = 0.0
@@ -103,9 +105,10 @@ class Engine:
         t0 = time.time()
         df = pd.read_parquet(processed / "transactions.parquet")
         hist = df[df["day"] < VALID_END_DAY]
-        cols = ["TransactionDT", "TransactionAmt", "uid", "device_fp", "P_emaildomain", "card1", "ProductCD"]
+        cols = ["TransactionDT", "TransactionAmt", "uid", "device_fp", "P_emaildomain", "card1", "ProductCD", "isFraud"]
         for t in hist[cols].to_dict("records"):
             self.store.process(t)
+            self.store.label(t, t["isFraud"])
         test = df[df["day"] >= VALID_END_DAY].drop(columns=["uid", "device_fp", "day"])
         self.queue = test.astype(object).where(test.notna(), None).to_dict("records")
         self.warm_seconds = time.time() - t0
@@ -115,6 +118,12 @@ class Engine:
         t = enrich(raw)
         with self.lock:
             f = self.store.process(t)
+            if label is not None:   # replay: the true label arrives after the label delay
+                self.store.label(t, label)
+            self.recent[int(t["TransactionID"])] = t
+            if len(self.recent) > 50_000:
+                self.recent.popitem(last=False)
+            self.now = int(t["TransactionDT"])
         x = self.encoder.transform_one(t, f)
         raw_p = float(self.booster.predict(x)[0])
         p = float(self.calibrator.predict([raw_p])[0])
@@ -255,6 +264,23 @@ def replay_start(req: ReplayReq):
 @app.post("/api/replay/stop")
 def replay_stop():
     get_engine().stop_replay()
+    return {"ok": True}
+
+
+class LabelReq(BaseModel):
+    TransactionID: int
+    is_fraud: bool
+
+
+@app.post("/label")
+def label(req: LabelReq):
+    """Analyst feedback: a confirmed label feeds the known-fraud features right away."""
+    e = get_engine()
+    with e.lock:
+        t = e.recent.get(req.TransactionID)
+        if t is None:
+            raise HTTPException(404, "unknown or expired TransactionID")
+        e.store.label(t, int(req.is_fraud), visible_at=e.now)
     return {"ok": True}
 
 
